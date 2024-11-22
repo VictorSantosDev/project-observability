@@ -1,0 +1,3 @@
+.docker/grafana
+data/elasticsearch/data
+data/kibana/data

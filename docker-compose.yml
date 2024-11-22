@@ -1,0 +1,128 @@
+version: "3"
+services:
+    es01:
+        container_name: es01
+        image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+        volumes:
+          # data
+          - ./data/elasticsearch/data:/usr/share/elasticsearch/data
+          
+          # config
+          - ./data/elasticsearch/config/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
+
+          # certs
+          - ./data/elasticsearch/certs/elastic-stack-ca.p12:/usr/share/elasticsearch/config/cert/elastic-stack-ca.p12
+          - ./data/elasticsearch/certs/elastic-certificates.p12:/usr/share/elasticsearch/config/cert/elastic-certificates.p12
+          - ./data/elasticsearch/certs/kibana-ca.crt:/usr/share/elasticsearch/config/cert/kibana-ca.crt
+          - ./data/elasticsearch/certs/http.p12:/usr/share/elasticsearch/config/cert/http.p12
+          - ./data/elasticsearch/certs/http_ca.crt:/usr/share/elasticsearch/config/cert/http_ca.crt
+          - ./data/elasticsearch/certs/transport.p12:/usr/share/elasticsearch/config/cert/transport.p12
+        ports:
+          - 9200:9200
+          - ${ES_PORT}:9300
+        environment:
+          - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+        mem_limit: ${ES_MEM_LIMIT}
+        networks:
+          - app-observability
+
+      kib01:
+        image: docker.elastic.co/kibana/kibana:${STACK_VERSION}
+        container_name: kib01
+        volumes:
+
+          # data
+          - ./data/kibana/data:/usr/share/kibana/data
+
+          # config
+          - ./data/kibana/config/kibana.yml:/usr/share/kibana/config/kibana.yml
+
+          # certs
+          - ./data/kibana/certs/elasticsearch-ca.pem:/usr/share/kibana/config/certs/elasticsearch-ca.pem
+          - ./data/kibana/certs/elasticsearch-ca.pem:/usr/share/kibana/config/certs/kibana-ca.crt
+          - ./data/kibana/certs/kibana-client.p12:/usr/share/kibana/config/certs/kibana-client.p12
+        ports:
+          - ${KIBANA_PORT}:5601
+        environment:
+          - KIBANA_PASSWORD=${KIBANA_PASSWORD}
+        depends_on:
+          - es01
+        networks:
+          - app-observability
+
+    grafana:
+        image: grafana/grafana:10.2.2
+        container_name: grafana
+        ports:
+            - 3000:3000
+        environment:
+            GF_SECURITY_ADMIN_USER: admin
+            GF_SECURITY_ADMIN_PASSWORD: admin
+            GF_SERVER_ROOT_URL: http://my.grafana.server/
+            GF_INSTALL_PLUGINS: grafana-clock-panel
+        volumes:
+            - ./.docker/grafana:/var/lib/grafana
+        restart: always
+        networks:
+            - app-observability
+
+    prometheus:
+        image: prom/prometheus
+        container_name: prometheus
+        ports:
+            - 9090:9090
+        networks:
+            - app-observability
+        volumes:
+            - ./.docker/prometheus/prometheus.yaml:/etc/prometheus/prometheus.yml
+        restart: always
+        depends_on:
+            - redis
+        extra_hosts:
+            - "host.docker.internal:172.18.68.58" # altere para o ip da sua maquina
+
+    node_exporter:
+        image: quay.io/prometheus/node-exporter:latest
+        container_name: node_exporter
+        ports:
+            - 9100:9100
+        command:
+            - '--path.rootfs=/host'
+        pid: host
+        volumes:
+            - '/.docker/node_exporter:/host'
+        restart: unless-stopped
+        networks:
+            - app-observability
+
+    jaeger:
+        image: jaegertracing/all-in-one:1.63.0
+        container_name: jaeger
+        environment:
+            - COLLECTOR_ZIPKIN_HOST_PORT=9411
+            - COLLECTOR_OTLP_ENABLED=true
+        ports:
+            - 16686:16686
+            - 14250:14250
+        restart: always
+        networks:
+            - app-observability
+
+    otel-collector:
+        image: otel/opentelemetry-collector:0.68.0
+        container_name: otel-collector
+        command: ["--config=/etc/otel-collector-config.yaml"]
+        restart: always
+        ports:
+            - 14300:4317
+        volumes:
+            - ./.docker/otelCollector/otel-collector-config.yaml:/etc/otel-collector-config.yaml
+        depends_on:
+            - jaeger
+            - prometheus
+        networks:
+            - app-observability
+
+networks:
+    app-observability:
+        driver: bridge
